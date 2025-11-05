@@ -9,3 +9,4 @@ plotly
 TimezoneFinder
 Nominatim
 geopy
+offline_sync
