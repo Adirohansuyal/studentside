@@ -255,11 +255,6 @@ def mark_attendance(student_name):
     now = datetime.now(ist)
     dateString = now.strftime('%Y-%m-%d')
     timeString = now.strftime('%H:%M:%S')
-    
-    # Debug: Show what date is being used
-    st.write(f"Debug: IST datetime: {now}")
-    st.write(f"Debug: Date string: {dateString}")
-    st.write(f"Debug: Time string: {timeString}")
 
     # Check if attendance for this student is already marked today in Supabase
     try:
@@ -275,8 +270,7 @@ def mark_attendance(student_name):
             "Method": "Student App"
         }
         
-        result = supabase.table("Attendance").insert(entry).execute()
-        st.write(f"Debug: Supabase insert result: {result.data}")
+        supabase.table("Attendance").insert(entry).execute()
         return True
         
     except Exception as e:
