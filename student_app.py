@@ -4,6 +4,7 @@ import time
 import numpy as np
 import pandas as pd
 import requests
+import plotly.express as px
 from datetime import datetime
 from supabase_client import supabase
 
@@ -39,6 +40,15 @@ st.markdown("""
     border-radius: 10px;
     border: 1px solid #e9ecef;
     margin: 1rem 0;
+    color: #333;
+}
+.info-card h4 {
+    color: #495057;
+    margin-bottom: 1rem;
+}
+.info-card p {
+    color: #6c757d;
+    line-height: 1.6;
 }
 .metric-card {
     background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
@@ -85,7 +95,59 @@ def calculate_student_percentage(student_name):
     except:
         return 0, 0, 0
 
+def create_attendance_graph(student_name):
+    """Create daily attendance line graph for student"""
+    try:
+        # Get all attendance dates
+        all_attendance = supabase.table("Attendance").select("*").execute()
+        if not all_attendance.data:
+            return None
+        
+        all_dates = sorted(pd.DataFrame(all_attendance.data)["Date"].unique())
+        
+        # Get student's attendance
+        student_records = get_student_attendance_data(student_name)
+        student_dates = [record["Date"] for record in student_records]
+        
+        # Create daily attendance data
+        attendance_data = []
+        for date in all_dates:
+            attendance_data.append({
+                "Date": date,
+                "Present": 1 if date in student_dates else 0
+            })
+        
+        df = pd.DataFrame(attendance_data)
+        df["Date"] = pd.to_datetime(df["Date"])
+        
+        # Create line graph
+        fig = px.line(df, x="Date", y="Present", 
+                     title=f"Daily Attendance Pattern - {student_name}",
+                     labels={"Present": "Attendance (1=Present, 0=Absent)", "Date": "Date"})
+        
+        fig.update_traces(mode='lines', line=dict(width=3, color='blue'))
+        fig.update_layout(height=400, yaxis=dict(tickvals=[0, 1], ticktext=["Absent", "Present"]))
+        
+        return fig
+    except:
+        return None
+
 def generate_student_insights(student_name):
+    """Generate AI insights for specific student"""
+    try:
+        attended, total, percentage = calculate_student_percentage(student_name)
+        
+        # Simple rule-based insights (replace with actual AI API if available)
+        if percentage >= 90:
+            return f"Excellent attendance! You're attending {percentage}% of classes. Keep up the great work!"
+        elif percentage >= 75:
+            return f"Good attendance at {percentage}%. Try to maintain consistency to stay above 75%."
+        else:
+            return f"Attendance is {percentage}%, below the 75% requirement. Consider improving attendance to avoid academic issues."
+            
+    except:
+        return "Unable to generate insights at this time."
+
     """Generate AI insights for specific student"""
     try:
         attended, total, percentage = calculate_student_percentage(student_name)
@@ -111,24 +173,55 @@ def generate_student_insights(student_name):
         return "Unable to generate insights at this time."
 
 def student_chatbot_response(user_query, student_name):
-    """Simple chatbot for student queries"""
+    """Enhanced chatbot for comprehensive student queries"""
     query_lower = user_query.lower()
     
-    if "attendance" in query_lower or "percentage" in query_lower:
+    # Personal information queries
+    if "name" in query_lower or "who am i" in query_lower:
+        return f"Your name is {student_name}. You are logged into the FaceMark Pro student portal."
+    
+    # Attendance queries
+    elif "attendance" in query_lower or "percentage" in query_lower:
         attended, total, percentage = calculate_student_percentage(student_name)
-        return f"Your attendance: {attended}/{total} classes ({percentage}%)"
+        return f"Your attendance: {attended}/{total} classes ({percentage}%). {'✅ Above 75% requirement!' if percentage >= 75 else '⚠️ Below 75% requirement.'}"
     
     elif "records" in query_lower or "history" in query_lower:
         records = get_student_attendance_data(student_name)
         if records:
-            return f"You have {len(records)} attendance records. Check the 'Show Records' section for details."
+            recent = records[-1] if records else None
+            return f"You have {len(records)} attendance records. Last marked: {recent['Date']} at {recent['Time']} via {recent['Method']}." if recent else f"You have {len(records)} attendance records."
         return "No attendance records found."
     
-    elif "help" in query_lower:
-        return "I can help with: attendance percentage, attendance records, insights, and general questions about your attendance."
+    # Status and performance queries
+    elif "status" in query_lower or "performance" in query_lower:
+        attended, total, percentage = calculate_student_percentage(student_name)
+        if percentage >= 90:
+            return f"Excellent performance! {percentage}% attendance. You're among the top performers."
+        elif percentage >= 75:
+            return f"Good performance! {percentage}% attendance. Keep maintaining this level."
+        else:
+            return f"Needs improvement! {percentage}% attendance. Focus on regular attendance to meet the 75% requirement."
     
+    # Today's attendance
+    elif "today" in query_lower:
+        today = datetime.now().strftime("%Y-%m-%d")
+        records = get_student_attendance_data(student_name)
+        today_record = [r for r in records if r['Date'] == today]
+        if today_record:
+            return f"✅ Yes, you marked attendance today at {today_record[0]['Time']} via {today_record[0]['Method']}."
+        return "❌ No, you haven't marked attendance today yet."
+    
+    # Help and capabilities
+    elif "help" in query_lower or "what can you do" in query_lower:
+        return "I can help with: your name, attendance percentage, attendance records, today's status, performance analysis, insights, and general questions about your attendance data."
+    
+    # Greetings
+    elif any(word in query_lower for word in ["hello", "hi", "hey"]):
+        return f"Hello {student_name}! How can I help you with your attendance today?"
+    
+    # Default response with suggestions
     else:
-        return "I can help you with attendance-related questions. Try asking about your attendance percentage or records!"
+        return f"Hi {student_name}! I can help you with questions like: 'What is my name?', 'What's my attendance percentage?', 'Did I attend today?', 'Show my records', or 'How is my performance?'"
 
 
 def validate_session_qr(qr_data, session_id):
@@ -171,7 +264,6 @@ def mark_attendance(student_name):
 
 
 def login_interface():
-    st.markdown('<div class="login-card">', unsafe_allow_html=True)
     st.subheader("🔐 Student Login")
 
     name = st.text_input("Full Name")
@@ -195,8 +287,6 @@ def login_interface():
         else:
             st.warning("⚠️ Fill all fields")
 
-    st.markdown("</div>", unsafe_allow_html=True)
-
 
 def scan_interface():
     col1, col2 = st.columns([2, 1])
@@ -209,10 +299,8 @@ def scan_interface():
     
     st.markdown(f"### 👋 Welcome, {st.session_state.student_name}")
     
-    # Sidebar navigation
-    st.sidebar.markdown("### 📊 Dashboard")
-    
-    tab = st.sidebar.selectbox("Select Option:", [
+    # Main screen navigation using tabs
+    tab1, tab2, tab3, tab4, tab5 = st.tabs([
         "📱 Mark Attendance", 
         "📈 My Attendance", 
         "📋 My Records", 
@@ -220,8 +308,7 @@ def scan_interface():
         "💬 Chatbot"
     ])
     
-    if tab == "📱 Mark Attendance":
-        st.markdown('<div class="scan-card">', unsafe_allow_html=True)
+    with tab1:
         st.subheader("📱 Mark Your Attendance")
         
         session_id = st.text_input("Session ID (ask teacher):")
@@ -244,9 +331,8 @@ def scan_interface():
                     st.warning("⚠️ Already marked today!")
             else:
                 st.error("❌ Invalid or Expired QR")
-        st.markdown("</div>", unsafe_allow_html=True)
     
-    elif tab == "📈 My Attendance":
+    with tab2:
         attended, total, percentage = calculate_student_percentage(st.session_state.student_name)
         
         col1, col2, col3 = st.columns(3)
@@ -280,7 +366,7 @@ def scan_interface():
         else:
             st.error(f"⚠️ Warning: Your attendance is {percentage}% (Below required 75%)")
     
-    elif tab == "📋 My Records":
+    with tab3:
         st.subheader("📋 Your Attendance Records")
         records = get_student_attendance_data(st.session_state.student_name)
         
@@ -290,7 +376,7 @@ def scan_interface():
         else:
             st.info("No attendance records found.")
     
-    elif tab == "🎯 My Insights":
+    with tab4:
         st.subheader("🎯 AI Attendance Insights")
         insights = generate_student_insights(st.session_state.student_name)
         
@@ -300,37 +386,40 @@ def scan_interface():
             <p>{insights}</p>
         </div>
         """, unsafe_allow_html=True)
+        
+        # Add attendance graph
+        st.subheader("📈 Daily Attendance Pattern")
+        graph = create_attendance_graph(st.session_state.student_name)
+        if graph:
+            st.plotly_chart(graph, use_container_width=True)
+        else:
+            st.info("No attendance data available for graph.")
     
-    elif tab == "💬 Chatbot":
+    with tab5:
         st.subheader("💬 Attendance Assistant")
         
-        # Toggle chatbot visibility
-        if st.button("Toggle Chat"):
-            st.session_state.chatbot_visible = not st.session_state.chatbot_visible
+        st.markdown("""
+        <div class="info-card">
+            <h4>🤖 Ask me about your attendance!</h4>
+            <p>I can help with attendance percentage, records, and insights.</p>
+        </div>
+        """, unsafe_allow_html=True)
         
-        if st.session_state.chatbot_visible:
-            st.markdown("""
-            <div class="info-card">
-                <h4>🤖 Ask me about your attendance!</h4>
-                <p>I can help with attendance percentage, records, and insights.</p>
-            </div>
-            """, unsafe_allow_html=True)
+        # Display chat history
+        for message in st.session_state.chat_history:
+            with st.chat_message(message["role"]):
+                st.markdown(message["content"])
+        
+        # Chat input
+        if user_input := st.chat_input("Ask about your attendance..."):
+            st.session_state.chat_history.append({"role": "user", "content": user_input})
+            with st.chat_message("user"):
+                st.markdown(user_input)
             
-            # Display chat history
-            for message in st.session_state.chat_history:
-                with st.chat_message(message["role"]):
-                    st.markdown(message["content"])
-            
-            # Chat input
-            if user_input := st.chat_input("Ask about your attendance..."):
-                st.session_state.chat_history.append({"role": "user", "content": user_input})
-                with st.chat_message("user"):
-                    st.markdown(user_input)
-                
-                with st.chat_message("assistant"):
-                    response = student_chatbot_response(user_input, st.session_state.student_name)
-                    st.markdown(response)
-                    st.session_state.chat_history.append({"role": "assistant", "content": response})
+            with st.chat_message("assistant"):
+                response = student_chatbot_response(user_input, st.session_state.student_name)
+                st.markdown(response)
+                st.session_state.chat_history.append({"role": "assistant", "content": response})
 
 
 
