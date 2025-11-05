@@ -14,21 +14,11 @@ from geopy.geocoders import Nominatim
 # Function to get user's timezone
 def get_user_timezone():
     try:
-        # Get user's IP address
-        response = requests.get('https://api.ipify.org?format=json')
-        ip_address = response.json()['ip']
-
-        # Get location from IP address
-        geolocator = Nominatim(user_agent="geoapiExercises")
-        location = geolocator.geocode(ip_address)
-
-        # Get timezone from location
-        tf = TimezoneFinder()
-        timezone = tf.timezone_at(lng=location.longitude, lat=location.latitude)
-        return timezone
-    except Exception as e:
-        print(f"Error getting user timezone: {e}")
-        return "UTC"  # Default to UTC if unable to get timezone
+        # Use system timezone
+        import time
+        return time.tzname[0]
+    except:
+        return "Asia/Kolkata"  # Default to IST
 
 # OpenCV QR detector (works on Streamlit Cloud)
 qr_detector = cv2.QRCodeDetector()
@@ -226,8 +216,7 @@ def student_chatbot_response(user_query, student_name):
     
     # Today's attendance
     elif "today" in query_lower:
-        user_timezone = get_user_timezone()
-        today = datetime.now(pytz.timezone(user_timezone)).strftime("%Y-%m-%d")
+        today = datetime.now().strftime("%Y-%m-%d")
         records = get_student_attendance_data(student_name)
         today_record = [r for r in records if r['Date'] == today]
         if today_record:
@@ -260,9 +249,9 @@ def validate_session_qr(qr_data, session_id):
 
 
 def mark_attendance(student_name):
-    """Insert new attendance if not exists - using same logic as main.py"""
-    user_timezone = get_user_timezone()
-    now = datetime.now(pytz.timezone(user_timezone))
+    """Insert new attendance if not exists - using local timezone"""
+    # Use local timezone directly
+    now = datetime.now()
     dateString = now.strftime('%Y-%m-%d')
     timeString = now.strftime('%H:%M:%S')
     
