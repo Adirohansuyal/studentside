@@ -5,3 +5,4 @@ pyzxing
 numpy
 python-dotenv
 Pillow
+plotly
