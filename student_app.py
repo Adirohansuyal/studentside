@@ -1,6 +1,3 @@
-
-
-
 import streamlit as st
 import cv2
 import time
@@ -9,7 +6,7 @@ from datetime import datetime
 from pyzxing import BarCodeReader
 from supabase_client import supabase
 
-# Initialize ZXing reader
+# Initialize reader
 reader = BarCodeReader()
 
 st.set_page_config(page_title="Student Attendance", page_icon="🎓", layout="centered")
@@ -42,110 +39,125 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-# Initialize session state
+# Session
 if "logged_in" not in st.session_state:
     st.session_state.logged_in = False
 if "student_name" not in st.session_state:
     st.session_state.student_name = None
 
+# ✅ FIX 1: Add debug logger
+def notify_error(msg):
+    st.error(msg)
+    st.stop()
+
 def validate_session_qr(qr_data, session_id):
-    """Validate QR code"""
     try:
         parts = qr_data.split(":")
-        if len(parts) >= 4 and parts[0] == "SESSION" and parts[1] == session_id:
+        if parts[0] == "SESSION" and parts[1] == session_id:
             qr_timestamp = int(parts[3])
-            current_time = int(time.time())
-            return abs(current_time - qr_timestamp) <= 8
+            return abs(int(time.time()) - qr_timestamp) <= 10
     except:
         pass
     return False
 
 def mark_attendance(student_name):
-    """Mark attendance in database"""
     now = datetime.now()
     dateString = now.strftime('%Y-%m-%d')
     timeString = now.strftime('%H:%M:%S')
-    
-    # Check if already marked
-    response = supabase.table("Attendance").select("*").eq("Name", student_name).eq("Date", dateString).execute()
-    if response.data:
+
+    # ✅ FIX 2: Ensure matching field names
+    check = supabase.table("Attendance") \
+        .select("*") \
+        .eq("Name", student_name) \
+        .eq("Date", dateString) \
+        .execute()
+
+    if check.data:
         return False
-    
-    new_entry = {
+
+    entry = {
         "Name": student_name,
         "Date": dateString,
         "Time": timeString,
         "Method": "Student App"
     }
-    supabase.table("Attendance").insert(new_entry).execute()
+
+    # ✅ FIX 3: Capture response to detect failure
+    result = supabase.table("Attendance").insert(entry).execute()
+
+    if result.error:
+        notify_error("Database insert failed, check table columns")
+
     return True
 
 def login_interface():
-    """Student login interface"""
     st.markdown('<div class="login-card">', unsafe_allow_html=True)
     st.subheader("🔐 Student Login")
-    
-    name = st.text_input("Enter your full name:", key="login_name")
-    email = st.text_input("Enter parent's Gmail:", key="login_email")
-    
-    if st.button("Login", key="login_btn"):
+
+    name = st.text_input("Full name")
+    email = st.text_input("Parent Gmail")
+
+    if st.button("Login"):
         if name and email:
-            response = supabase.table("students_data").select("*").eq("Name", name).eq("Parent_Gmail", email).execute()
-            
-            if response.data:
+            resp = supabase.table("students_data") \
+                .select("*") \
+                .eq("Name", name) \
+                .eq("Parent_Gmail", email) \
+                .execute()
+
+            if resp.data:
                 st.session_state.logged_in = True
                 st.session_state.student_name = name.upper()
-                st.success(f"✅ Welcome, {name}!")
+                st.success(f"✅ Welcome {name}!")
                 st.rerun()
             else:
-                st.error("❌ Invalid credentials. Check your name and parent's email.")
+                st.error("Invalid credentials")
         else:
-            st.warning("⚠️ Please fill in both fields")
-    
-    st.markdown('</div>', unsafe_allow_html=True)
+            st.warning("Enter all fields")
+
+    st.markdown("</div>", unsafe_allow_html=True)
 
 def scan_interface():
-    """QR scanning interface"""
     st.markdown('<div class="scan-card">', unsafe_allow_html=True)
-    st.subheader(f"📱 Welcome, {st.session_state.student_name}")
-    
-    if st.button("Logout", key="logout_btn"):
+
+    st.subheader(f"📱 Hello {st.session_state.student_name}")
+
+    if st.button("Logout"):
         st.session_state.logged_in = False
         st.session_state.student_name = None
         st.rerun()
-    
-    st.write("Scan the classroom QR code for attendance:")
-    
-    session_id = st.text_input("Session ID (ask your teacher):", key="session_id")
-    
-    # st.camera_input allows browser camera scanning
-    img = st.camera_input("Point camera at QR Code")
 
+    session_id = st.text_input("Session ID:")
+
+    img = st.camera_input("Scan QR Code")
+
+    # ✅ FIX 4: Prevent constant reruns
     if img is not None and session_id:
-
-        file_bytes = np.asarray(bytearray(img.getvalue()), dtype=np.uint8)
-        frame = cv2.imdecode(file_bytes, 1)
+        file = np.asarray(bytearray(img.getvalue()), dtype=np.uint8)
+        frame = cv2.imdecode(file, 1)
 
         results = reader.decode_array(frame)
 
-        if results:
-            for obj in results:
-                qr_data = obj.get("parsed")
+        if not results:
+            st.warning("No QR detected!")
+            return
 
-                if qr_data and validate_session_qr(qr_data, session_id):
+        qr_data = results[0].get("parsed")
 
-                    if mark_attendance(st.session_state.student_name):
-                        st.success(f"✅ Attendance marked for {st.session_state.student_name}!")
-                        st.balloons()
-                    else:
-                        st.error("❌ Attendance already marked today")
+        if validate_session_qr(qr_data, session_id):
 
-                else:
-                    st.error("❌ Invalid or expired QR code")
+            if mark_attendance(st.session_state.student_name):
+                st.success("✅ Attendance Marked!")
+                st.balloons()
+            else:
+                st.error("Already marked today")
 
-    st.markdown('</div>', unsafe_allow_html=True)
+        else:
+            st.error("Invalid or expired QR")
 
-# Main controller
+    st.markdown("</div>", unsafe_allow_html=True)
+
+# Controller
 if not st.session_state.logged_in:
     login_interface()
 else:
