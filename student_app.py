@@ -249,16 +249,17 @@ def validate_session_qr(qr_data, session_id):
 
 
 def mark_attendance(student_name):
-    """Insert new attendance if not exists - using local timezone"""
-    # Use local timezone directly
-    now = datetime.now()
+    """Insert new attendance if not exists - using IST timezone"""
+    # Force IST timezone
+    ist = pytz.timezone('Asia/Kolkata')
+    now = datetime.now(ist)
     dateString = now.strftime('%Y-%m-%d')
     timeString = now.strftime('%H:%M:%S')
     
     # Debug: Show what date is being used
-    st.write(f"Debug: Current date being used: {dateString}")
-    st.write(f"Debug: Current time being used: {timeString}")
-    st.write(f"Debug: Raw datetime object: {now}")
+    st.write(f"Debug: IST datetime: {now}")
+    st.write(f"Debug: Date string: {dateString}")
+    st.write(f"Debug: Time string: {timeString}")
 
     # Check if attendance for this student is already marked today in Supabase
     try:
@@ -274,7 +275,8 @@ def mark_attendance(student_name):
             "Method": "Student App"
         }
         
-        supabase.table("Attendance").insert(entry).execute()
+        result = supabase.table("Attendance").insert(entry).execute()
+        st.write(f"Debug: Supabase insert result: {result.data}")
         return True
         
     except Exception as e:
