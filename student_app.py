@@ -7,13 +7,13 @@ import requests
 import plotly.express as px
 from datetime import datetime
 from supabase_client import supabase
-from offline_sync import mark_attendance_offline_aware, is_online, get_offline_count, sync_offline_data
+
 import pytz
 from timezonefinder import TimezoneFinder
 from geopy.geocoders import Nominatim
 
 # AI Configuration
-GROQ_API_KEY = "YAK"
+GROQ_API_KEY = "Your_api_key"
 GROQ_MODEL = "llama-3.3-70b-versatile"
 
 # Function to get user's timezone
@@ -280,64 +280,59 @@ def validate_session_qr(qr_data, session_id):
 
 
 def mark_attendance(student_name):
-    """Mark attendance with offline support and update rewards"""
+    """Mark attendance and update rewards"""
     now = datetime.now()
     dateString = now.strftime('%Y-%m-%d')
     timeString = now.strftime('%H:%M:%S')
     
-    if is_online():
-        try:
-            # Check if already marked today
-            response = supabase.table("Attendance").select("*").eq("Name", student_name.upper()).eq("Date", dateString).execute()
-            if response.data:
-                return False  # Already marked
+    try:
+        # Check if already marked today
+        response = supabase.table("Attendance").select("*").eq("Name", student_name.upper()).eq("Date", dateString).execute()
+        if response.data:
+            return False  # Already marked
+        
+        # Mark attendance
+        supabase.table("Attendance").insert({
+            "Name": student_name.upper(),
+            "Date": dateString,
+            "Time": timeString,
+            "Method": "Student QR"
+        }).execute()
+        
+        # Update rewards
+        reward_response = supabase.table("rewards").select("*").eq("Name", student_name.upper()).execute()
+        
+        if reward_response.data:
+            # Update existing
+            current_count = reward_response.data[0]["AttendanceCount"]
+            new_count = current_count + 1
             
-            # Mark attendance
-            supabase.table("Attendance").insert({
-                "Name": student_name.upper(),
-                "Date": dateString,
-                "Time": timeString,
-                "Method": "Student QR"
-            }).execute()
-            
-            # Update rewards
-            reward_response = supabase.table("rewards").select("*").eq("Name", student_name.upper()).execute()
-            
-            if reward_response.data:
-                # Update existing
-                current_count = reward_response.data[0]["AttendanceCount"]
-                new_count = current_count + 1
-                
-                if new_count >= 10:
-                    badge = "Gold"
-                elif new_count >= 5:
-                    badge = "Silver"
-                elif new_count >= 4:
-                    badge = "Bronze"
-                else:
-                    badge = "No Badge"
-                
-                supabase.table("rewards").update({
-                    "AttendanceCount": new_count,
-                    "Badge": badge
-                }).eq("Name", student_name.upper()).execute()
+            if new_count >= 10:
+                badge = "Gold"
+            elif new_count >= 5:
+                badge = "Silver"
+            elif new_count >= 4:
+                badge = "Bronze"
             else:
-                # Create new
-                supabase.table("rewards").insert({
-                    "Name": student_name.upper(),
-                    "AttendanceCount": 1,
-                    "Badge": "No Badge"
-                }).execute()
+                badge = "No Badge"
             
-            return True
-            
-        except Exception as e:
-            st.error(f"Error marking attendance: {e}")
-            return False
-    else:
-        # Offline mode - use existing offline function
-        from offline_sync import save_offline_attendance
-        return save_offline_attendance(student_name, "Student QR")
+            supabase.table("rewards").update({
+                "AttendanceCount": new_count,
+                "Badge": badge
+            }).eq("Name", student_name.upper()).execute()
+        else:
+            # Create new
+            supabase.table("rewards").insert({
+                "Name": student_name.upper(),
+                "AttendanceCount": 1,
+                "Badge": "No Badge"
+            }).execute()
+        
+        return True
+        
+    except Exception as e:
+        st.error(f"Error marking attendance: {e}")
+        return False
 
 
 def login_interface():
@@ -375,27 +370,6 @@ def scan_interface():
             st.rerun()
     
     st.markdown(f"### 👋 Welcome, {st.session_state.student_name}")
-    
-    # Connection status and sync
-    col1, col2, col3 = st.columns([2, 1, 1])
-    with col1:
-        if is_online():
-            st.success("🟢 Online")
-        else:
-            st.error("🔴 Offline Mode")
-    
-    with col2:
-        offline_count = get_offline_count()
-        if offline_count > 0:
-            st.warning(f"📱 {offline_count} offline records")
-    
-    with col3:
-        if st.button("🔄 Sync") and is_online():
-            synced = sync_offline_data()
-            if synced > 0:
-                st.success(f"✅ Synced {synced} records!")
-            else:
-                st.info("No records to sync")
     
     # Main screen navigation using tabs
     tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
