@@ -3,11 +3,8 @@ import cv2
 import time
 import numpy as np
 from datetime import datetime
-from pyzxing import BarCodeReader
+from pyzbar.pyzbar import decode
 from supabase_client import supabase
-
-# Initialize ZXing reader
-reader = BarCodeReader()
 
 st.set_page_config(page_title="Student Attendance", page_icon="🎓", layout="centered")
 
@@ -45,11 +42,11 @@ if "logged_in" not in st.session_state:
 if "student_name" not in st.session_state:
     st.session_state.student_name = None
 
-def validate_session_qr(qr_data, session_id):
-    """Validate QR code"""
+def validate_session_qr(qr_data):
+    """Validate any session QR code"""
     try:
         parts = qr_data.split(":")
-        if len(parts) >= 4 and parts[0] == "SESSION" and parts[1] == session_id:
+        if len(parts) >= 4 and parts[0] == "SESSION":
             qr_timestamp = int(parts[3])
             current_time = int(time.time())
             return abs(current_time - qr_timestamp) <= 8
@@ -111,35 +108,51 @@ def scan_interface():
         st.session_state.student_name = None
         st.rerun()
     
-    st.write("Scan the classroom QR code for attendance:")
+    st.write("Scan any classroom QR code for attendance:")
     
-    session_id = st.text_input("Session ID (ask your teacher):", key="session_id")
-    
-    # st.camera_input allows browser camera scanning
-    img = st.camera_input("Point camera at QR Code")
-
-    if img is not None and session_id:
-
-        file_bytes = np.asarray(bytearray(img.getvalue()), dtype=np.uint8)
-        frame = cv2.imdecode(file_bytes, 1)
-
-        results = reader.decode_array(frame)
-
-        if results:
-            for obj in results:
-                qr_data = obj.get("parsed")
-
-                if qr_data and validate_session_qr(qr_data, session_id):
-
+    if st.button("Start QR Scanner", key="start_scan"):
+        cap = cv2.VideoCapture(0)
+        if not cap.isOpened():
+            st.error("❌ Could not access camera")
+            return
+        
+        st.write("📷 Point camera at QR code...")
+        image_placeholder = st.empty()
+        stop_button = st.button("Stop Scanner", key="stop_scan")
+        
+        while True:
+            success, frame = cap.read()
+            if not success:
+                break
+            
+            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            image_placeholder.image(frame_rgb, channels="RGB")
+            
+            # Decode QR codes
+            decoded_objects = decode(frame)
+            for obj in decoded_objects:
+                qr_data = obj.data.decode("utf-8")
+                
+                if validate_session_qr(qr_data):
+                    cap.release()
+                    cv2.destroyAllWindows()
+                    
+                    # Mark attendance automatically
                     if mark_attendance(st.session_state.student_name):
                         st.success(f"✅ Attendance marked for {st.session_state.student_name}!")
                         st.balloons()
                     else:
                         st.error("❌ Attendance already marked today")
-
+                    return
                 else:
                     st.error("❌ Invalid or expired QR code")
-
+            
+            if stop_button:
+                break
+        
+        cap.release()
+        cv2.destroyAllWindows()
+    
     st.markdown('</div>', unsafe_allow_html=True)
 
 # Main controller
