@@ -3,10 +3,11 @@ import cv2
 import time
 import numpy as np
 from datetime import datetime
-from pyzbar.pyzbar import decode
 from supabase_client import supabase
 
-# Streamlit UI config
+# OpenCV QR detector (works on Streamlit Cloud)
+qr_detector = cv2.QRCodeDetector()
+
 st.set_page_config(page_title="Student Attendance", page_icon="🎓", layout="centered")
 
 # CSS
@@ -37,36 +38,40 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-# Session variables
+# Session state
 if "logged_in" not in st.session_state:
     st.session_state.logged_in = False
 if "student_name" not in st.session_state:
     st.session_state.student_name = None
 
+
 def validate_session_qr(qr_data, session_id):
+    """SESSION:ClassID:TeacherID:Timestamp"""
     try:
         parts = qr_data.split(":")
         if parts[0] == "SESSION" and parts[1] == session_id:
-            qr_timestamp = int(parts[3])
-            # QR valid for 10 seconds
-            return abs(int(time.time()) - qr_timestamp) <= 10
+            timestamp = int(parts[3])
+            return abs(int(time.time()) - timestamp) <= 10
     except:
         pass
     return False
 
-def mark_attendance(student_name):
-    now = datetime.now()
-    dateString = now.strftime('%Y-%m-%d')
-    timeString = now.strftime('%H:%M:%S')
 
-    check = supabase.table("Attendance") \
+def mark_attendance(student_name):
+    """Insert new attendance if not exists"""
+    now = datetime.now()
+    dateString = now.strftime("%Y-%m-%d")
+    timeString = now.strftime("%H:%M:%S")
+
+    # Check if already marked today
+    existing = supabase.table("Attendance") \
         .select("*") \
         .eq("Name", student_name) \
         .eq("Date", dateString) \
         .execute()
 
-    if check.data:
-        return False
+    if existing.data:
+        return False  # duplicate
 
     entry = {
         "Name": student_name,
@@ -75,15 +80,15 @@ def mark_attendance(student_name):
         "Method": "Student App"
     }
 
-    result = supabase.table("Attendance").insert(entry).execute()
-
+    supabase.table("Attendance").insert(entry).execute()
     return True
+
 
 def login_interface():
     st.markdown('<div class="login-card">', unsafe_allow_html=True)
     st.subheader("🔐 Student Login")
 
-    name = st.text_input("Full name")
+    name = st.text_input("Full Name")
     email = st.text_input("Parent Gmail")
 
     if st.button("Login"):
@@ -97,54 +102,52 @@ def login_interface():
             if resp.data:
                 st.session_state.logged_in = True
                 st.session_state.student_name = name.upper()
-                st.success(f"✅ Welcome {name}!")
+                st.success(f"✅ Welcome, {name}!")
                 st.rerun()
             else:
-                st.error("Invalid credentials")
+                st.error("❌ Invalid credentials")
         else:
-            st.warning("Enter all fields")
+            st.warning("⚠️ Fill all fields")
 
     st.markdown("</div>", unsafe_allow_html=True)
 
+
 def scan_interface():
     st.markdown('<div class="scan-card">', unsafe_allow_html=True)
-
-    st.subheader(f"📱 Hello {st.session_state.student_name}")
-    st.write("⚠️ If camera doesn't open, click the 🔒 lock icon in browser → Allow Camera")
+    st.subheader(f"📱 Hello, {st.session_state.student_name}")
 
     if st.button("Logout"):
         st.session_state.logged_in = False
         st.session_state.student_name = None
         st.rerun()
 
-    session_id = st.text_input("Session ID:")
+    session_id = st.text_input("Session ID (ask teacher):")
 
-    img = st.camera_input("Scan QR Code")
+    img = st.camera_input("Point camera at QR Code")
 
     if img is not None and session_id:
-        file = np.asarray(bytearray(img.getvalue()), dtype=np.uint8)
-        frame = cv2.imdecode(file, 1)
+        file_bytes = np.asarray(bytearray(img.getvalue()), dtype=np.uint8)
+        frame = cv2.imdecode(file_bytes, 1)
 
-        decoded = decode(frame)
+        qr_text, bbox, _ = qr_detector.detectAndDecode(frame)
 
-        if not decoded:
-            st.warning("❌ No QR detected! Try moving closer or increasing light.")
+        if not qr_text:
+            st.warning("❌ No QR detected!")
             return
 
-        qr_data = decoded[0].data.decode("utf-8")
-
-        if validate_session_qr(qr_data, session_id):
+        if validate_session_qr(qr_text, session_id):
             if mark_attendance(st.session_state.student_name):
-                st.success("✅ Attendance Marked!")
+                st.success("✅ Attendance Marked Successfully!")
                 st.balloons()
             else:
-                st.error("Already marked today")
+                st.warning("⚠️ Already marked today!")
         else:
-            st.error("Invalid or expired QR")
+            st.error("❌ Invalid or Expired QR")
 
     st.markdown("</div>", unsafe_allow_html=True)
 
-# Controller
+
+# Main Controller
 if not st.session_state.logged_in:
     login_interface()
 else:
