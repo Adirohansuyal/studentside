@@ -1,7 +1,7 @@
 streamlit
 supabase
 opencv-python-headless
-pyzbar
+pyzxing
 numpy
 python-dotenv
 Pillow
