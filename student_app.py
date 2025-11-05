@@ -7,6 +7,28 @@ import requests
 import plotly.express as px
 from datetime import datetime
 from supabase_client import supabase
+import pytz
+from timezonefinder import TimezoneFinder
+from geopy.geocoders import Nominatim
+
+# Function to get user's timezone
+def get_user_timezone():
+    try:
+        # Get user's IP address
+        response = requests.get('https://api.ipify.org?format=json')
+        ip_address = response.json()['ip']
+
+        # Get location from IP address
+        geolocator = Nominatim(user_agent="geoapiExercises")
+        location = geolocator.geocode(ip_address)
+
+        # Get timezone from location
+        tf = TimezoneFinder()
+        timezone = tf.timezone_at(lng=location.longitude, lat=location.latitude)
+        return timezone
+    except Exception as e:
+        print(f"Error getting user timezone: {e}")
+        return "UTC"  # Default to UTC if unable to get timezone
 
 # OpenCV QR detector (works on Streamlit Cloud)
 qr_detector = cv2.QRCodeDetector()
@@ -204,7 +226,8 @@ def student_chatbot_response(user_query, student_name):
     
     # Today's attendance
     elif "today" in query_lower:
-        today = datetime.now().strftime("%Y-%m-%d")
+        user_timezone = get_user_timezone()
+        today = datetime.now(pytz.timezone(user_timezone)).strftime("%Y-%m-%d")
         records = get_student_attendance_data(student_name)
         today_record = [r for r in records if r['Date'] == today]
         if today_record:
@@ -237,30 +260,37 @@ def validate_session_qr(qr_data, session_id):
 
 
 def mark_attendance(student_name):
-    """Insert new attendance if not exists"""
-    now = datetime.now()
-    dateString = now.strftime("%Y-%m-%d")
-    timeString = now.strftime("%H:%M:%S")
+    """Insert new attendance if not exists - using same logic as main.py"""
+    user_timezone = get_user_timezone()
+    now = datetime.now(pytz.timezone(user_timezone))
+    dateString = now.strftime('%Y-%m-%d')
+    timeString = now.strftime('%H:%M:%S')
+    
+    # Debug: Show what date is being used
+    st.write(f"Debug: Current date being used: {dateString}")
+    st.write(f"Debug: Current time being used: {timeString}")
+    st.write(f"Debug: Raw datetime object: {now}")
 
-    # Check if already marked today
-    existing = supabase.table("Attendance") \
-        .select("*") \
-        .eq("Name", student_name) \
-        .eq("Date", dateString) \
-        .execute()
-
-    if existing.data:
-        return False  # duplicate
-
-    entry = {
-        "Name": student_name,
-        "Date": dateString,
-        "Time": timeString,
-        "Method": "Student App"
-    }
-
-    supabase.table("Attendance").insert(entry).execute()
-    return True
+    # Check if attendance for this student is already marked today in Supabase
+    try:
+        response = supabase.table("Attendance").select("*").eq("Name", student_name.upper()).eq("Date", dateString).execute()
+        if response.data:
+            return False  # Already marked today
+        
+        # Insert new attendance record
+        entry = {
+            "Name": student_name.upper(),
+            "Date": dateString,
+            "Time": timeString,
+            "Method": "Student App"
+        }
+        
+        supabase.table("Attendance").insert(entry).execute()
+        return True
+        
+    except Exception as e:
+        st.error(f"Error marking attendance: {e}")
+        return False
 
 
 def login_interface():
