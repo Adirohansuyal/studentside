@@ -336,10 +336,22 @@ def scan_interface():
         if img is not None and session_id:
             file_bytes = np.asarray(bytearray(img.getvalue()), dtype=np.uint8)
             frame = cv2.imdecode(file_bytes, 1)
+            
+            # Try multiple QR detection methods
             qr_text, bbox, _ = qr_detector.detectAndDecode(frame)
             
+            # If first method fails, try with grayscale
             if not qr_text:
-                st.warning("❌ No QR detected!")
+                gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+                qr_text, bbox, _ = qr_detector.detectAndDecode(gray)
+            
+            # If still fails, try with enhanced contrast
+            if not qr_text:
+                enhanced = cv2.convertScaleAbs(gray, alpha=1.5, beta=30)
+                qr_text, bbox, _ = qr_detector.detectAndDecode(enhanced)
+            
+            if not qr_text:
+                st.warning("❌ No QR detected! Try better lighting or closer distance.")
                 return
             
             if validate_session_qr(qr_text, session_id):
