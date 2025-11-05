@@ -2,7 +2,7 @@ import streamlit as st
 import cv2
 import time
 from datetime import datetime
-from pyzbar.pyzbar import decode
+from pyzxing import BarCodeReader reader = BarCodeReader()
 from supabase_client import supabase
 
 st.set_page_config(page_title="Student Attendance", page_icon="🎓", layout="centered")
