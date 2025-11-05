@@ -11,6 +11,10 @@ import pytz
 from timezonefinder import TimezoneFinder
 from geopy.geocoders import Nominatim
 
+# AI Configuration
+GROQ_API_KEY = "YOUR_API"
+GROQ_MODEL = "llama-3.3-70b-versatile"
+
 # Function to get user's timezone
 def get_user_timezone():
     try:
@@ -185,55 +189,65 @@ def generate_student_insights(student_name):
         return "Unable to generate insights at this time."
 
 def student_chatbot_response(user_query, student_name):
-    """Enhanced chatbot for comprehensive student queries"""
+    """Enhanced chatbot using Groq API for comprehensive student queries"""
     query_lower = user_query.lower()
     
-    # Personal information queries
-    if "name" in query_lower or "who am i" in query_lower:
-        return f"Your name is {student_name}. You are logged into the FaceMark Pro student portal."
+    # Get student data for context
+    attended, total, percentage = calculate_student_percentage(student_name)
+    records = get_student_attendance_data(student_name)
     
-    # Attendance queries
-    elif "attendance" in query_lower or "percentage" in query_lower:
-        attended, total, percentage = calculate_student_percentage(student_name)
-        return f"Your attendance: {attended}/{total} classes ({percentage}%). {'✅ Above 75% requirement!' if percentage >= 75 else '⚠️ Below 75% requirement.'}"
+    # Create context for AI
+    context = f"""
+    Student: {student_name}
+    Attendance: {attended}/{total} classes ({percentage}%)
+    Total Records: {len(records)}
+    Status: {'Above 75% requirement' if percentage >= 75 else 'Below 75% requirement'}
+    """
     
-    elif "records" in query_lower or "history" in query_lower:
-        records = get_student_attendance_data(student_name)
-        if records:
-            recent = records[-1] if records else None
-            return f"You have {len(records)} attendance records. Last marked: {recent['Date']} at {recent['Time']} via {recent['Method']}." if recent else f"You have {len(records)} attendance records."
-        return "No attendance records found."
-    
-    # Status and performance queries
-    elif "status" in query_lower or "performance" in query_lower:
-        attended, total, percentage = calculate_student_percentage(student_name)
-        if percentage >= 90:
-            return f"Excellent performance! {percentage}% attendance. You're among the top performers."
-        elif percentage >= 75:
-            return f"Good performance! {percentage}% attendance. Keep maintaining this level."
+    # Try Groq API first
+    try:
+        prompt = f"""
+        You are an attendance assistant for student {student_name}. 
+        
+        Context: {context}
+        
+        Student Question: {user_query}
+        
+        Provide a helpful, concise response about their attendance. Be encouraging and specific.
+        """
+        
+        headers = {
+            "Authorization": f"Bearer {GROQ_API_KEY}",
+            "Content-Type": "application/json"
+        }
+        payload = {
+            "model": GROQ_MODEL,
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": 0.7
+        }
+        
+        response = requests.post("https://api.groq.com/openai/v1/chat/completions", headers=headers, json=payload)
+        response.raise_for_status()
+        
+        return response.json()["choices"][0]["message"]["content"]
+        
+    except Exception as e:
+        # Fallback to rule-based responses
+        if "name" in query_lower or "who am i" in query_lower:
+            return f"Your name is {student_name}. You are logged into the FaceMark Pro student portal."
+        
+        elif "attendance" in query_lower or "percentage" in query_lower:
+            return f"Your attendance: {attended}/{total} classes ({percentage}%). {'✅ Above 75% requirement!' if percentage >= 75 else '⚠️ Below 75% requirement.'}"
+        
+        elif "today" in query_lower:
+            today = datetime.now().strftime("%Y-%m-%d")
+            today_record = [r for r in records if r['Date'] == today]
+            if today_record:
+                return f"✅ Yes, you marked attendance today at {today_record[0]['Time']} via {today_record[0]['Method']}."
+            return "❌ No, you haven't marked attendance today yet."
+        
         else:
-            return f"Needs improvement! {percentage}% attendance. Focus on regular attendance to meet the 75% requirement."
-    
-    # Today's attendance
-    elif "today" in query_lower:
-        today = datetime.now().strftime("%Y-%m-%d")
-        records = get_student_attendance_data(student_name)
-        today_record = [r for r in records if r['Date'] == today]
-        if today_record:
-            return f"✅ Yes, you marked attendance today at {today_record[0]['Time']} via {today_record[0]['Method']}."
-        return "❌ No, you haven't marked attendance today yet."
-    
-    # Help and capabilities
-    elif "help" in query_lower or "what can you do" in query_lower:
-        return "I can help with: your name, attendance percentage, attendance records, today's status, performance analysis, insights, and general questions about your attendance data."
-    
-    # Greetings
-    elif any(word in query_lower for word in ["hello", "hi", "hey"]):
-        return f"Hello {student_name}! How can I help you with your attendance today?"
-    
-    # Default response with suggestions
-    else:
-        return f"Hi {student_name}! I can help you with questions like: 'What is my name?', 'What's my attendance percentage?', 'Did I attend today?', 'Show my records', or 'How is my performance?'"
+            return f"Hi {student_name}! I can help you with questions about your attendance percentage, records, and performance. Ask me anything!"
 
 
 def validate_session_qr(qr_data, session_id):
