@@ -7,12 +7,13 @@ import requests
 import plotly.express as px
 from datetime import datetime
 from supabase_client import supabase
+from offline_sync import mark_attendance_offline_aware, is_online, get_offline_count, sync_offline_data
 import pytz
 from timezonefinder import TimezoneFinder
 from geopy.geocoders import Nominatim
 
 # AI Configuration
-GROQ_API_KEY = "YOUR_API"
+GROQ_API_KEY = "YAK"
 GROQ_MODEL = "llama-3.3-70b-versatile"
 
 # Function to get user's timezone
@@ -83,7 +84,23 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
+def get_student_badge_info(student_name):
+    """Get badge and reward information for student"""
+    try:
+        response = supabase.table("rewards").select("*").eq("Name", student_name.upper()).execute()
+        if response.data:
+            return response.data[0]
+        return {"Name": student_name, "AttendanceCount": 0, "Badge": "No Badge"}
+    except:
+        return {"Name": student_name, "AttendanceCount": 0, "Badge": "No Badge"}
+
 def get_student_attendance_data(student_name):
+    """Get attendance data for specific student"""
+    try:
+        response = supabase.table("Attendance").select("*").eq("Name", student_name.upper()).execute()
+        return response.data
+    except:
+        return []
     """Get attendance data for specific student"""
     try:
         response = supabase.table("Attendance").select("*").eq("Name", student_name.upper()).execute()
@@ -263,33 +280,64 @@ def validate_session_qr(qr_data, session_id):
 
 
 def mark_attendance(student_name):
-    """Insert new attendance if not exists - using IST timezone"""
-    # Force IST timezone
-    ist = pytz.timezone('Asia/Kolkata')
-    now = datetime.now(ist)
+    """Mark attendance with offline support and update rewards"""
+    now = datetime.now()
     dateString = now.strftime('%Y-%m-%d')
     timeString = now.strftime('%H:%M:%S')
-
-    # Check if attendance for this student is already marked today in Supabase
-    try:
-        response = supabase.table("Attendance").select("*").eq("Name", student_name.upper()).eq("Date", dateString).execute()
-        if response.data:
-            return False  # Already marked today
-        
-        # Insert new attendance record
-        entry = {
-            "Name": student_name.upper(),
-            "Date": dateString,
-            "Time": timeString,
-            "Method": "Student App"
-        }
-        
-        supabase.table("Attendance").insert(entry).execute()
-        return True
-        
-    except Exception as e:
-        st.error(f"Error marking attendance: {e}")
-        return False
+    
+    if is_online():
+        try:
+            # Check if already marked today
+            response = supabase.table("Attendance").select("*").eq("Name", student_name.upper()).eq("Date", dateString).execute()
+            if response.data:
+                return False  # Already marked
+            
+            # Mark attendance
+            supabase.table("Attendance").insert({
+                "Name": student_name.upper(),
+                "Date": dateString,
+                "Time": timeString,
+                "Method": "Student QR"
+            }).execute()
+            
+            # Update rewards
+            reward_response = supabase.table("rewards").select("*").eq("Name", student_name.upper()).execute()
+            
+            if reward_response.data:
+                # Update existing
+                current_count = reward_response.data[0]["AttendanceCount"]
+                new_count = current_count + 1
+                
+                if new_count >= 10:
+                    badge = "Gold"
+                elif new_count >= 5:
+                    badge = "Silver"
+                elif new_count >= 4:
+                    badge = "Bronze"
+                else:
+                    badge = "No Badge"
+                
+                supabase.table("rewards").update({
+                    "AttendanceCount": new_count,
+                    "Badge": badge
+                }).eq("Name", student_name.upper()).execute()
+            else:
+                # Create new
+                supabase.table("rewards").insert({
+                    "Name": student_name.upper(),
+                    "AttendanceCount": 1,
+                    "Badge": "No Badge"
+                }).execute()
+            
+            return True
+            
+        except Exception as e:
+            st.error(f"Error marking attendance: {e}")
+            return False
+    else:
+        # Offline mode - use existing offline function
+        from offline_sync import save_offline_attendance
+        return save_offline_attendance(student_name, "Student QR")
 
 
 def login_interface():
@@ -328,10 +376,32 @@ def scan_interface():
     
     st.markdown(f"### 👋 Welcome, {st.session_state.student_name}")
     
+    # Connection status and sync
+    col1, col2, col3 = st.columns([2, 1, 1])
+    with col1:
+        if is_online():
+            st.success("🟢 Online")
+        else:
+            st.error("🔴 Offline Mode")
+    
+    with col2:
+        offline_count = get_offline_count()
+        if offline_count > 0:
+            st.warning(f"📱 {offline_count} offline records")
+    
+    with col3:
+        if st.button("🔄 Sync") and is_online():
+            synced = sync_offline_data()
+            if synced > 0:
+                st.success(f"✅ Synced {synced} records!")
+            else:
+                st.info("No records to sync")
+    
     # Main screen navigation using tabs
-    tab1, tab2, tab3, tab4, tab5 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
         "📱 Mark Attendance", 
         "📈 My Attendance", 
+        "🏆 My Badges",
         "📋 My Records", 
         "🎯 My Insights",
         "💬 Chatbot"
@@ -408,6 +478,67 @@ def scan_interface():
             st.error(f"⚠️ Warning: Your attendance is {percentage}% (Below required 75%)")
     
     with tab3:
+        st.subheader("🏆 My Badges & Rewards")
+        badge_info = get_student_badge_info(st.session_state.student_name)
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            # Badge display
+            badge = badge_info.get("Badge", "No Badge")
+            if badge == "Gold":
+                st.markdown("""
+                <div style="background: linear-gradient(135deg, #FFD700 0%, #FFA500 100%); 
+                           padding: 2rem; border-radius: 15px; text-align: center; color: #333;">
+                    <h2>🥇 GOLD BADGE</h2>
+                    <p style="font-size: 18px; margin: 0;">Excellent Attendance!</p>
+                </div>
+                """, unsafe_allow_html=True)
+            elif badge == "Silver":
+                st.markdown("""
+                <div style="background: linear-gradient(135deg, #C0C0C0 0%, #A8A8A8 100%); 
+                           padding: 2rem; border-radius: 15px; text-align: center; color: #333;">
+                    <h2>🥈 SILVER BADGE</h2>
+                    <p style="font-size: 18px; margin: 0;">Good Attendance!</p>
+                </div>
+                """, unsafe_allow_html=True)
+            elif badge == "Bronze":
+                st.markdown("""
+                <div style="background: linear-gradient(135deg, #CD7F32 0%, #B87333 100%); 
+                           padding: 2rem; border-radius: 15px; text-align: center; color: white;">
+                    <h2>🥉 BRONZE BADGE</h2>
+                    <p style="font-size: 18px; margin: 0;">Keep Improving!</p>
+                </div>
+                """, unsafe_allow_html=True)
+            else:
+                st.markdown("""
+                <div style="background: linear-gradient(135deg, #6c757d 0%, #495057 100%); 
+                           padding: 2rem; border-radius: 15px; text-align: center; color: white;">
+                    <h2>📋 NO BADGE YET</h2>
+                    <p style="font-size: 18px; margin: 0;">Attend more to earn badges!</p>
+                </div>
+                """, unsafe_allow_html=True)
+        
+        with col2:
+            attendance_count = badge_info.get("AttendanceCount", 0)
+            st.markdown(f"""
+            <div class="metric-card">
+                <h3>{attendance_count}</h3>
+                <p>Total Attendance Count</p>
+            </div>
+            """, unsafe_allow_html=True)
+            
+            # Badge requirements
+            st.markdown("""
+            <div class="info-card">
+                <h4>🎯 Badge Requirements</h4>
+                <p>🥉 Bronze: 4+ attendances<br>
+                🥈 Silver: 5+ attendances<br>
+                🥇 Gold: 10+ attendances</p>
+            </div>
+            """, unsafe_allow_html=True)
+    
+    with tab4:
         st.subheader("📋 Your Attendance Records")
         records = get_student_attendance_data(st.session_state.student_name)
         
@@ -417,7 +548,7 @@ def scan_interface():
         else:
             st.info("No attendance records found.")
     
-    with tab4:
+    with tab5:
         st.subheader("🎯 AI Attendance Insights")
         insights = generate_student_insights(st.session_state.student_name)
         
@@ -436,7 +567,7 @@ def scan_interface():
         else:
             st.info("No attendance data available for graph.")
     
-    with tab5:
+    with tab6:
         st.subheader("💬 Attendance Assistant")
         
         st.markdown("""
