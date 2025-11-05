@@ -3,12 +3,10 @@ import cv2
 import time
 import numpy as np
 from datetime import datetime
-from pyzxing import BarCodeReader
+from pyzbar.pyzbar import decode
 from supabase_client import supabase
 
-# Initialize reader
-reader = BarCodeReader()
-
+# Streamlit UI config
 st.set_page_config(page_title="Student Attendance", page_icon="🎓", layout="centered")
 
 # CSS
@@ -39,22 +37,18 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-# Session
+# Session variables
 if "logged_in" not in st.session_state:
     st.session_state.logged_in = False
 if "student_name" not in st.session_state:
     st.session_state.student_name = None
-
-# ✅ FIX 1: Add debug logger
-def notify_error(msg):
-    st.error(msg)
-    st.stop()
 
 def validate_session_qr(qr_data, session_id):
     try:
         parts = qr_data.split(":")
         if parts[0] == "SESSION" and parts[1] == session_id:
             qr_timestamp = int(parts[3])
+            # QR valid for 10 seconds
             return abs(int(time.time()) - qr_timestamp) <= 10
     except:
         pass
@@ -65,7 +59,6 @@ def mark_attendance(student_name):
     dateString = now.strftime('%Y-%m-%d')
     timeString = now.strftime('%H:%M:%S')
 
-    # ✅ FIX 2: Ensure matching field names
     check = supabase.table("Attendance") \
         .select("*") \
         .eq("Name", student_name) \
@@ -82,11 +75,7 @@ def mark_attendance(student_name):
         "Method": "Student App"
     }
 
-    # ✅ FIX 3: Capture response to detect failure
     result = supabase.table("Attendance").insert(entry).execute()
-
-    if result.error:
-        notify_error("Database insert failed, check table columns")
 
     return True
 
@@ -121,6 +110,7 @@ def scan_interface():
     st.markdown('<div class="scan-card">', unsafe_allow_html=True)
 
     st.subheader(f"📱 Hello {st.session_state.student_name}")
+    st.write("⚠️ If camera doesn't open, click the 🔒 lock icon in browser → Allow Camera")
 
     if st.button("Logout"):
         st.session_state.logged_in = False
@@ -131,27 +121,24 @@ def scan_interface():
 
     img = st.camera_input("Scan QR Code")
 
-    # ✅ FIX 4: Prevent constant reruns
     if img is not None and session_id:
         file = np.asarray(bytearray(img.getvalue()), dtype=np.uint8)
         frame = cv2.imdecode(file, 1)
 
-        results = reader.decode_array(frame)
+        decoded = decode(frame)
 
-        if not results:
-            st.warning("No QR detected!")
+        if not decoded:
+            st.warning("❌ No QR detected! Try moving closer or increasing light.")
             return
 
-        qr_data = results[0].get("parsed")
+        qr_data = decoded[0].data.decode("utf-8")
 
         if validate_session_qr(qr_data, session_id):
-
             if mark_attendance(st.session_state.student_name):
                 st.success("✅ Attendance Marked!")
                 st.balloons()
             else:
                 st.error("Already marked today")
-
         else:
             st.error("Invalid or expired QR")
 
