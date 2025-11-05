@@ -1,11 +1,12 @@
 import streamlit as st
 import cv2
 import time
+import numpy as np
 from datetime import datetime
 from pyzxing import BarCodeReader
 from supabase_client import supabase
 
-# Initialize reader
+# Initialize ZXing reader
 reader = BarCodeReader()
 
 st.set_page_config(page_title="Student Attendance", page_icon="🎓", layout="centered")
@@ -67,7 +68,6 @@ def mark_attendance(student_name):
     if response.data:
         return False
     
-    # Mark attendance
     new_entry = {
         "Name": student_name,
         "Date": dateString,
@@ -87,7 +87,6 @@ def login_interface():
     
     if st.button("Login", key="login_btn"):
         if name and email:
-            # Validate credentials
             response = supabase.table("students_data").select("*").eq("Name", name).eq("Parent_Gmail", email).execute()
             
             if response.data:
@@ -116,53 +115,34 @@ def scan_interface():
     
     session_id = st.text_input("Session ID (ask your teacher):", key="session_id")
     
-    if session_id and st.button("Start QR Scanner", key="start_scan"):
-        cap = cv2.VideoCapture(0)
-        if not cap.isOpened():
-            st.error("❌ Could not access camera")
-            return
-        
-        st.write("📷 Point camera at QR code...")
-        image_placeholder = st.empty()
-        stop_button = st.button("Stop Scanner", key="stop_scan")
-        
-        while True:
-            success, frame = cap.read()
-            if not success:
-                break
-            
-            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            image_placeholder.image(frame_rgb, channels="RGB")
-            
-            # ZXing Decode
-            results = reader.decode_array(frame)
-            
-            if results:
-                for obj in results:
-                    qr_data = obj.get("parsed")
-                    
-                    if qr_data and validate_session_qr(qr_data, session_id):
-                        cap.release()
-                        cv2.destroyAllWindows()
-                        
-                        if mark_attendance(st.session_state.student_name):
-                            st.success(f"✅ Attendance marked for {st.session_state.student_name}!")
-                            st.balloons()
-                        else:
-                            st.error("❌ Attendance already marked today")
-                        return
+    # st.camera_input allows browser camera scanning
+    img = st.camera_input("Point camera at QR Code")
+
+    if img is not None and session_id:
+
+        file_bytes = np.asarray(bytearray(img.getvalue()), dtype=np.uint8)
+        frame = cv2.imdecode(file_bytes, 1)
+
+        results = reader.decode_array(frame)
+
+        if results:
+            for obj in results:
+                qr_data = obj.get("parsed")
+
+                if qr_data and validate_session_qr(qr_data, session_id):
+
+                    if mark_attendance(st.session_state.student_name):
+                        st.success(f"✅ Attendance marked for {st.session_state.student_name}!")
+                        st.balloons()
                     else:
-                        st.error("❌ Invalid QR code")
-            
-            if stop_button:
-                break
-        
-        cap.release()
-        cv2.destroyAllWindows()
-    
+                        st.error("❌ Attendance already marked today")
+
+                else:
+                    st.error("❌ Invalid or expired QR code")
+
     st.markdown('</div>', unsafe_allow_html=True)
 
-# Main
+# Main controller
 if not st.session_state.logged_in:
     login_interface()
 else:
