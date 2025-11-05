@@ -2,8 +2,11 @@ import streamlit as st
 import cv2
 import time
 from datetime import datetime
-from pyzxing import BarCodeReader reader = BarCodeReader()
+from pyzxing import BarCodeReader
 from supabase_client import supabase
+
+# Initialize reader
+reader = BarCodeReader()
 
 st.set_page_config(page_title="Student Attendance", page_icon="🎓", layout="centered")
 
@@ -111,7 +114,6 @@ def scan_interface():
     
     st.write("Scan the classroom QR code for attendance:")
     
-    # Get active session info from teacher app (you'll need to share this)
     session_id = st.text_input("Session ID (ask your teacher):", key="session_id")
     
     if session_id and st.button("Start QR Scanner", key="start_scan"):
@@ -132,24 +134,25 @@ def scan_interface():
             frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             image_placeholder.image(frame_rgb, channels="RGB")
             
-            # Decode QR codes
-            decoded_objects = decode(frame)
-            for obj in decoded_objects:
-                qr_data = obj.data.decode("utf-8")
-                
-                if validate_session_qr(qr_data, session_id):
-                    cap.release()
-                    cv2.destroyAllWindows()
+            # ZXing Decode
+            results = reader.decode_array(frame)
+            
+            if results:
+                for obj in results:
+                    qr_data = obj.get("parsed")
                     
-                    # Mark attendance
-                    if mark_attendance(st.session_state.student_name):
-                        st.success(f"✅ Attendance marked for {st.session_state.student_name}!")
-                        st.balloons()
+                    if qr_data and validate_session_qr(qr_data, session_id):
+                        cap.release()
+                        cv2.destroyAllWindows()
+                        
+                        if mark_attendance(st.session_state.student_name):
+                            st.success(f"✅ Attendance marked for {st.session_state.student_name}!")
+                            st.balloons()
+                        else:
+                            st.error("❌ Attendance already marked today")
+                        return
                     else:
-                        st.error("❌ Attendance already marked today")
-                    return
-                else:
-                    st.error("❌ Invalid QR code")
+                        st.error("❌ Invalid QR code")
             
             if stop_button:
                 break
@@ -159,7 +162,7 @@ def scan_interface():
     
     st.markdown('</div>', unsafe_allow_html=True)
 
-# Main app logic
+# Main
 if not st.session_state.logged_in:
     login_interface()
 else:
